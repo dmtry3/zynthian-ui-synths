@@ -1,0 +1,25 @@
+diff --git a/zyngine/zynthian_engine_zynaddsubfx.py b/zyngine/zynthian_engine_zynaddsubfx.py
+index 7f8f2ed2..f3fd20d4 100644
+--- a/zyngine/zynthian_engine_zynaddsubfx.py
++++ b/zyngine/zynthian_engine_zynaddsubfx.py
+@@ -55,8 +55,8 @@ class zynthian_engine_zynaddsubfx(zynthian_engine):
+         # ['expression', 11, 127],
+         ['volume', '/part$i/Pvolume', 96, 127, {'midi_cc': 7}],
+         ['panning', '/part$i/Ppanning', 64],
+-        ['filter cutoff', 74, 64, 127, {'filter': "cutoffFrequency"}],
+-        ['filter resonance', 71, 64, 127, {'filter': "resonance"}],
++        ['filter cutoff', 74, 64, 127],
++        ['filter resonance', 71, 64, 127],
+ 
+         ['voice limit', '/part$i/Pvoicelimit', 0, 60],
+         ['drum mode', '/part$i/Pdrummode', 'off', 'off|on'],
+@@ -136,6 +136,9 @@ class zynthian_engine_zynaddsubfx(zynthian_engine):
+         self.name = "ZynAddSubFX"
+         self.nickname = "ZY"
+         self.jackname = "zynaddsubfx"
++        fpath = self.ui_dir + "/zyngui/widgets_user/zynthian_widget_zynaddsubfx.py"
++        if isfile(fpath):
++            self.custom_gui_fpath = fpath
+ 
+         self.osc_target_port = ServerPort["zynaddsubfx_osc"]
+ 

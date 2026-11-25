@@ -1,0 +1,69 @@
+diff --git a/zyngui/zynthian_gui_engine.py b/zyngui/zynthian_gui_engine.py
+index c082e81e..1da4c113 100644
+--- a/zyngui/zynthian_gui_engine.py
++++ b/zyngui/zynthian_gui_engine.py
+@@ -23,6 +23,7 @@
+ #
+ # ******************************************************************************
+ 
++import os
+ import tkinter
+ import logging
+ from time import sleep
+@@ -296,8 +297,22 @@ class zynthian_gui_engine(zynthian_gui_selector):
+             pass
+         super().hide()
+ 
++    def _has_custom_widget(self, info):
++        try:
++            wdir = os.path.join(os.path.dirname(__file__), "widgets_user")
++            for key in ("NAME", "TITLE"):
++                val = info.get(key)
++                if val:
++                    pname = val.lower().replace(" ", "_")
++                    if os.path.isfile(os.path.join(wdir, f"zynthian_widget_{pname}.py")):
++                        return True
++        except Exception:
++            pass
++        return False
++
+     def fill_list(self):
+         self.list_data = []
++        self._custom_ui_rows = set()
+ 
+         if self.proc_type in ("MIDI Tool", "Audio Effect"):
+             self.list_data.append(("None", 0, "None", "None"))
+@@ -309,13 +324,17 @@ class zynthian_gui_engine(zynthian_gui_selector):
+             for eng in engines_info:
+                 i = len(self.list_data)
+                 info = engines_info[eng]
++                has_ui = self._has_custom_widget(info)
++                title = ("\u25c6 " + info["TITLE"]) if has_ui else info["TITLE"]
++                if has_ui:
++                    self._custom_ui_rows.add(i)
+                 if self.show_all:
+                     if info["ENABLED"]:
+-                        self.list_data.append((eng, i, "\u2612 " + info["TITLE"], info["NAME"]))
++                        self.list_data.append((eng, i, "\u2612 " + title, info["NAME"]))
+                     else:
+-                        self.list_data.append((eng, i, "\u2610 " + info["TITLE"], info["NAME"]))
++                        self.list_data.append((eng, i, "\u2610 " + title, info["NAME"]))
+                 else:
+-                    self.list_data.append((eng, i, info["TITLE"], info["NAME"]))
++                    self.list_data.append((eng, i, title, info["NAME"]))
+ 
+         # Display help if no engines are enabled ...
+         if len(self.list_data) == 0:
+@@ -328,6 +347,12 @@ class zynthian_gui_engine(zynthian_gui_selector):
+ 
+         super().fill_list()
+ 
++    def fill_listbox(self):
++        super().fill_listbox()
++        for i in getattr(self, "_custom_ui_rows", ()):
++            if 0 <= i < len(self.list_data):
++                self.listbox.itemconfig(i, {"fg": "#4dabf7"})
++
+     def select(self, index=None, set_zctrl=True):
+         super().select(index, set_zctrl)
+         self.update_info()
