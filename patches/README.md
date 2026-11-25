@@ -17,9 +17,11 @@ Optional patches for `/zynthian/zynthian-ui` on Zynthian that complement custom 
 
 ## Usage / Использование
 
+`apply_patches.sh` auto-detects local Zynthian vs remote SSH (default remote host: `root@zynthian.local`).  
+`apply_patches.sh` автоматически определяет локальный Zynthian или удалённый SSH-хост (по умолчанию: `root@zynthian.local`).
+
 ```bash
-# Check patch status on Zynthian (default: root@10.0.99.99)
-# Проверить статус патчей на Zynthian (по умолчанию: root@10.0.99.99)
+# Check patch status / Проверить статус патчей
 ./patches/apply_patches.sh --check
 
 # Apply all patches (idempotent — already applied patches are skipped)
@@ -30,12 +32,16 @@ Optional patches for `/zynthian/zynthian-ui` on Zynthian that complement custom 
 # Откатить все патчи (например, перед обновлением Zynthian)
 ./patches/apply_patches.sh --revert
 
-# Specify a custom host / Указать другой хост
+# Specify a custom remote host / Указать другой удалённый хост
 ./patches/apply_patches.sh root@<zynthian-ip>
 ```
 
 Restart Zynthian UI after applying or reverting / После применения или отката перезапустите UI:
 
 ```bash
-ssh root@10.0.99.99 systemctl restart zynthian
+# On Zynthian / На Zynthian:
+systemctl restart zynthian
+
+# Remotely / Удалённо:
+ssh root@<zynthian-ip> systemctl restart zynthian
 ```

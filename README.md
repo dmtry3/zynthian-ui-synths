@@ -73,15 +73,49 @@ Custom touch-first workstation widgets for **Zynthian** (V5 800×480 & touchscre
 
 ## Installation
 
-Default Zynthian host: `root@10.0.99.99`
+### Quick Install directly on Zynthian (recommended)
+
+Open Zynthian's terminal (via SSH or Webconf → Interface → Terminal) and run:
 
 ```bash
-./install.sh
-# or specify another host:
-./install.sh root@<zynthian-ip>
+# Widgets only:
+curl -fsSL https://raw.githubusercontent.com/dmtry3/zynthian-ui-synths/main/install.sh | bash
+
+# Widgets + optional Zynthian UI patches (menu ◆ badge & widget priority) + restart UI:
+curl -fsSL https://raw.githubusercontent.com/dmtry3/zynthian-ui-synths/main/install.sh | bash -s -- --with-patches --restart
+```
+
+### Install from a local clone on Zynthian
+
+```bash
+git clone https://github.com/dmtry3/zynthian-ui-synths.git
+cd zynthian-ui-synths
+./install.sh --with-patches --restart
+```
+
+### Remote install from PC / Mac over SSH
+
+```bash
+git clone https://github.com/dmtry3/zynthian-ui-synths.git
+cd zynthian-ui-synths
+
+# Default remote host is root@zynthian.local (or specify your Zynthian IP):
+./install.sh root@zynthian.local
+./install.sh root@<zynthian-ip> --with-patches --restart
 ```
 
 Widgets are installed to `/zynthian/zynthian-ui/zyngui/widgets_user/`.
+
+### Uninstall
+
+```bash
+# Directly on Zynthian (removes only UI Synths widgets & reverts patches):
+curl -fsSL https://raw.githubusercontent.com/dmtry3/zynthian-ui-synths/main/install.sh | bash -s -- --uninstall --restart
+
+# Or from a cloned repo / remotely:
+./install.sh --uninstall --restart
+./install.sh root@<zynthian-ip> --uninstall --restart
+```
 
 ---
 
@@ -89,18 +123,13 @@ Widgets are installed to `/zynthian/zynthian-ui/zyngui/widgets_user/`.
 
 Optional patches for `/zynthian/zynthian-ui` (see [`patches/README.md`](patches/README.md) for details):
 
-1. **`01-highlight-custom-widgets-in-menu.patch`** — marks engines/effects that have a custom widget in `widgets_user/` with a blue `◆ ` badge (`#4dabf7`) in Zynthian's engine selector menu.
+1. **`01-highlight-custom-widgets-in-menu.patch`** — marks engines/effects that have a widget in `widgets_user/` with a blue `◆ ` badge (`#4dabf7`) in Zynthian's engine selector menu.
 2. **`02-prioritize-custom-gui-widget.patch`** — prioritizes `custom_gui_fpath` over built-in Zynthian mini-widgets (`filter`/`envelope`).
 3. **`03-zynaddsubfx-custom-widget.patch`** — wires `zynthian_widget_zynaddsubfx.py` into `zynthian_engine_zynaddsubfx.py`.
 
 ```bash
-./patches/apply_patches.sh --check   # check patch status on Zynthian
-./patches/apply_patches.sh           # apply patches (idempotent)
-./patches/apply_patches.sh --revert  # revert patches (e.g. before updating Zynthian)
-```
-
-Restart Zynthian UI after applying or reverting patches:
-
-```bash
-ssh root@10.0.99.99 systemctl restart zynthian
+# On Zynthian directly (auto-detected) or remotely via user@host:
+./install.sh --check-patches               # check patch status
+./install.sh --with-patches --restart      # apply patches & restart UI
+./install.sh --revert-patches --restart    # revert patches (e.g. before updating Zynthian)
 ```

@@ -73,15 +73,49 @@
 
 ## Установка
 
-Хост Zynthian по умолчанию: `root@10.0.99.99`
+### Быстрая установка одной командой прямо на Zynthian (рекомендуется)
+
+Откройте терминал Zynthian (по SSH или через Webconf → Interface → Terminal) и выполните:
 
 ```bash
-./install.sh
-# или указать другой адрес:
-./install.sh root@<zynthian-ip>
+# Только виджеты:
+curl -fsSL https://raw.githubusercontent.com/dmtry3/zynthian-ui-synths/main/install.sh | bash
+
+# Виджеты + опциональные патчи Zynthian UI (значок ◆ в меню и приоритет виджетов) + перезапуск UI:
+curl -fsSL https://raw.githubusercontent.com/dmtry3/zynthian-ui-synths/main/install.sh | bash -s -- --with-patches --restart
 ```
 
-Виджеты копируются в `/zynthian/zynthian-ui/zyngui/widgets_user/`.
+### Установка из локального клона на Zynthian
+
+```bash
+git clone https://github.com/dmtry3/zynthian-ui-synths.git
+cd zynthian-ui-synths
+./install.sh --with-patches --restart
+```
+
+### Удалённая установка с компьютера (PC / Mac) по SSH
+
+```bash
+git clone https://github.com/dmtry3/zynthian-ui-synths.git
+cd zynthian-ui-synths
+
+# По умолчанию используется root@zynthian.local (или укажите IP вашего Zynthian):
+./install.sh root@zynthian.local
+./install.sh root@<zynthian-ip> --with-patches --restart
+```
+
+Виджеты устанавливаются в `/zynthian/zynthian-ui/zyngui/widgets_user/`.
+
+### Удаление
+
+```bash
+# Прямо на Zynthian (удалит только виджеты UI Synths и откатит патчи):
+curl -fsSL https://raw.githubusercontent.com/dmtry3/zynthian-ui-synths/main/install.sh | bash -s -- --uninstall --restart
+
+# Или из клона / удалённо по SSH:
+./install.sh --uninstall --restart
+./install.sh root@<zynthian-ip> --uninstall --restart
+```
 
 ---
 
@@ -94,13 +128,8 @@
 3. **`03-zynaddsubfx-custom-widget.patch`** — подключает `zynthian_widget_zynaddsubfx.py` в `zynthian_engine_zynaddsubfx.py`.
 
 ```bash
-./patches/apply_patches.sh --check   # проверить статус патчей на Zynthian
-./patches/apply_patches.sh           # применить патчи (идемпотентно)
-./patches/apply_patches.sh --revert  # откатить патчи (например, перед обновлением Zynthian)
-```
-
-После применения или отката перезапустите интерфейс Zynthian:
-
-```bash
-ssh root@10.0.99.99 systemctl restart zynthian
+# Прямо на Zynthian (определяется автоматически) или удалённо с указанием user@host:
+./install.sh --check-patches               # проверить статус патчей
+./install.sh --with-patches --restart      # применить патчи и перезапустить UI
+./install.sh --revert-patches --restart    # откатить патчи (например, перед обновлением Zynthian)
 ```

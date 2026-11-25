@@ -32,10 +32,12 @@
 
 import logging
 import math
+import os
 import re
 import time
 import tkinter
 import tkinter.font
+import xml.etree.ElementTree as ET
 
 from zyngui import zynthian_gui_config
 from zyngui import zynthian_widget_base
@@ -134,6 +136,7 @@ CHARACTERS = ["Warm", "Neutral", "Bright"]
 OCTAVES = ["-3 oct", "-2 oct", "-1 oct", "0 oct", "+1 oct", "+2 oct", "+3 oct"]
 ROUTES = ["F1", "Both", "F2"]
 ENV_MODES = ["Digital", "Analog"]
+ENV_SHAPES = ["Concave", "Linear", "Convex"]
 TOGGLE_OFF_ON = ["Off", "On"]
 BYPASS_LABELS = ["Active", "Bypass"]
 VOICES_LABELS = [f"{v} v" for v in range(1, 17)]
@@ -161,9 +164,9 @@ NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 
 def norm_to_hz(n):
-    """Surge XT pitch-scaled cutoff (MIDI -56..+70 relative to A4=440Hz -> 13.75Hz..25kHz)."""
+    """Surge XT pitch-scaled cutoff (MIDI -60..+70 relative to A4=440Hz -> 13.75Hz..25kHz)."""
     n = max(0.0, min(1.0, float(n)))
-    return 440.0 * (2.0 ** ((n * 126.0 - 56.0) / 12.0))
+    return 440.0 * (2.0 ** ((n * 130.0 - 60.0) / 12.0))
 
 
 def fmt_hz(hz):
@@ -177,30 +180,32 @@ def fmt_hz(hz):
 
 
 def norm_to_env_s(n):
-    """Surge XT envelope time: 2^(n*15 - 10) seconds (~1ms .. 32s)."""
+    """Surge XT envelope time: 2^(n*13 - 8) seconds (~3.9ms .. 32s, 0ms at min)."""
     n = max(0.0, min(1.0, float(n)))
     if n <= 0.001:
         return 0.0
-    return 2.0 ** (n * 15.0 - 10.0)
+    return 2.0 ** (n * 13.0 - 8.0)
 
 
 def fmt_time_s(s):
     if s <= 0.0005:
         return "0ms"
     if s < 0.1:
-        return f"{s * 1000.0:.0f}ms"
+        return f"{s * 1000.0:.1f}ms" if s < 0.01 else f"{s * 1000.0:.0f}ms"
     if s < 1.0:
         return f"{s * 1000.0:.0f}ms"
     return f"{s:.2f}s" if s < 10.0 else f"{s:.1f}s"
 
 
 def norm_to_lfo_hz(n):
-    """Surge XT LFO rate: ~0.008 Hz .. 50 Hz."""
+    """Surge XT LFO rate: 2^(n*16 - 7) Hz (~0.008 Hz .. 512 Hz)."""
     n = max(0.0, min(1.0, float(n)))
-    return 0.01 * (5000.0 ** n)
+    return 2.0 ** (n * 16.0 - 7.0)
 
 
 def fmt_lfo_hz(hz):
+    if hz >= 100.0:
+        return f"{hz:.0f}Hz"
     if hz >= 10.0:
         return f"{hz:.1f}Hz"
     return f"{hz:.2f}Hz"
@@ -243,6 +248,325 @@ def _enum_scale(names):
 
 
 # ------------------------------------------------------------------------------
+# Surge XT .fxp Preset Sync (compensates for JUCE LV2 not reporting patch:Set)
+# ------------------------------------------------------------------------------
+SURGE_DATA_DIRS = (
+    "/usr/local/share/surge-xt",
+    "/usr/share/surge-xt",
+    os.path.expanduser("~/.local/share/surge-xt"),
+    "/root/.local/share/surge-xt",
+)
+_FXP_INDEX_CACHE = None
+
+
+def _build_fxp_index():
+    """Scan Surge XT factory/3rdparty .fxp directories once and build lookup maps."""
+    global _FXP_INDEX_CACHE
+    if _FXP_INDEX_CACHE is not None:
+        return _FXP_INDEX_CACHE
+
+    by_bank_label = {}
+    by_label = {}
+    by_name = {}
+    init_path = None
+
+    for base in SURGE_DATA_DIRS:
+        if not os.path.isdir(base):
+            continue
+        for root_dir, _, files in os.walk(base):
+            for fname in files:
+                if not fname.lower().endswith(".fxp"):
+                    continue
+                full = os.path.join(root_dir, fname)
+                stem = os.path.splitext(fname)[0].strip()
+                stem_l = stem.lower()
+                if stem_l == "init saw" and init_path is None:
+                    init_path = full
+
+                rel = os.path.relpath(full, base).replace("\\", "/")
+                parts = rel.split("/")
+                if not parts or not parts[0].startswith("patches_"):
+                    continue
+                sub = parts[1:]
+                if not sub:
+                    continue
+
+                by_name.setdefault(stem_l, full)
+                if len(sub) == 2:
+                    bank_l = sub[0].strip().lower()
+                    by_bank_label[(bank_l, stem_l)] = full
+                    by_label.setdefault(stem_l, full)
+                elif len(sub) == 3:
+                    p0, p1 = sub[0].strip().lower(), sub[1].strip().lower()
+                    lbl0 = f"{p0}/{stem_l}"
+                    lbl1 = f"{p1}/{stem_l}"
+                    by_bank_label[(p1, lbl0)] = full
+                    by_bank_label[(p0, lbl1)] = full
+                    by_bank_label[(f"{p0}/{p1}", stem_l)] = full
+                    by_label.setdefault(lbl0, full)
+                    by_label.setdefault(lbl1, full)
+                elif len(sub) >= 4:
+                    p0, p1 = sub[0].strip().lower(), sub[1].strip().lower()
+                    mid = "/".join(x.strip().lower() for x in sub[2:-1])
+                    lbl_a = f"{p0}/{mid}/{stem_l}"
+                    lbl_b = f"{p1}/{mid}/{stem_l}"
+                    by_bank_label[(p1, lbl_a)] = full
+                    by_bank_label[(p0, lbl_b)] = full
+                    by_bank_label[(sub[-2].strip().lower(), f"{'/'.join(x.strip().lower() for x in sub[:-2])}/{stem_l}")] = full
+                    by_label.setdefault(lbl_a, full)
+                    by_label.setdefault(lbl_b, full)
+
+    _FXP_INDEX_CACHE = (by_bank_label, by_label, by_name, init_path)
+    return _FXP_INDEX_CACHE
+
+
+def _find_surge_fxp(bank_name, preset_name):
+    """Resolve Zynthian (bank_name, preset_name) to the matching Surge XT .fxp file."""
+    by_bank_label, by_label, by_name, init_path = _build_fxp_index()
+    if not preset_name:
+        return init_path
+    p_clean = str(preset_name).strip().lower()
+    if p_clean in ("default", "init", "init saw"):
+        return init_path
+    b_clean = str(bank_name or "").strip().lower()
+
+    if b_clean:
+        hit = by_bank_label.get((b_clean, p_clean))
+        if hit:
+            return hit
+    hit = by_label.get(p_clean)
+    if hit:
+        return hit
+    leaf = p_clean.split("/")[-1].strip()
+    return by_name.get(leaf) or init_path
+
+
+def _clamp01(v):
+    return max(0.0, min(1.0, float(v)))
+
+
+def _fxp_param_to_norm(tag, raw_val, raw_type, osc_types, f2_offset_flags):
+    """Convert a Surge XT .fxp XML parameter value into LV2 normalized [0.0..1.0]."""
+    try:
+        v = float(raw_val)
+    except Exception:
+        return None
+    # Guard against Surge XT raw int32 bitcast union fields in unused osc slots
+    if abs(v) > 1e6:
+        return None
+
+    # Global parameters
+    if tag == "volume":
+        return _clamp01((v + 48.0) / 48.0)
+    if tag.startswith("volume_FX"):
+        return _clamp01(v)
+    if tag == "character":
+        return _clamp01(v / 2.0)
+    if tag == "scenemode":
+        return _clamp01(v / 3.0)
+    if tag == "polylimit":
+        return _clamp01((v - 2.0) / 62.0)
+    if tag == "fx_bypass":
+        return _clamp01(v / 3.0)
+    if tag == "fx_disable":
+        return 1.0 if int(v) != 0 else 0.0
+
+    if len(tag) < 3 or tag[0] not in ("a", "b") or tag[1] != "_":
+        return None
+    sc = tag[0]
+    rest = tag[2:]
+
+    # Envelopes (Amp EG = env1, Filter EG = env2)
+    if rest.startswith("env1_") or rest.startswith("env2_"):
+        sub = rest[5:]
+        if sub in ("attack", "decay", "release"):
+            return _clamp01((v + 8.0) / 13.0)
+        if sub == "sustain":
+            return _clamp01(v)
+        if sub in ("attack_shape", "decay_shape", "release_shape"):
+            return _clamp01(v / 2.0)
+        if sub == "mode":
+            return _clamp01(v)
+        return None
+
+    # Filters 1 & 2
+    if rest.startswith("filter1_") or rest.startswith("filter2_"):
+        fi = rest[6]
+        sub = rest[8:]
+        if sub == "type":
+            return _clamp01(v / 33.0)
+        if sub == "cutoff":
+            if fi == "2" and f2_offset_flags.get(sc, 0):
+                return _clamp01((v + 60.0) / 120.0)
+            return _clamp01((v + 60.0) / 130.0)
+        if sub == "resonance":
+            return _clamp01(v)
+        if sub == "envmod":
+            return _clamp01((v + 96.0) / 192.0)
+        if sub == "keytrack":
+            return _clamp01((v + 1.0) / 2.0)
+        return None
+
+    # LFOs 0..11
+    if rest.startswith("lfo"):
+        m = re.match(r"^lfo\d+_(.+)$", rest)
+        if not m:
+            return None
+        sub = m.group(1)
+        if sub == "shape":
+            return _clamp01(v / 9.0)
+        if sub == "rate":
+            return _clamp01((v + 7.0) / 16.0)
+        if sub in ("phase", "magnitude", "sustain"):
+            return _clamp01(v)
+        if sub == "deform":
+            return _clamp01((v + 1.0) / 2.0)
+        if sub == "trigmode":
+            return _clamp01(v / 2.0)
+        if sub == "unipolar":
+            return _clamp01(v)
+        if sub in ("delay", "attack", "hold", "decay", "release"):
+            return _clamp01((v + 8.0) / 13.0)
+        return None
+
+    # Oscillators 1..3
+    if rest.startswith("osc") and len(rest) > 5 and rest[3] in ("1", "2", "3") and rest[4] == "_":
+        oi = int(rest[3])
+        sub = rest[5:]
+        if sub == "type":
+            return _clamp01(v / 11.0)
+        if sub == "octave":
+            return _clamp01((v + 3.0) / 6.0)
+        if sub == "pitch":
+            return _clamp01((v + 7.0) / 14.0)
+        if sub in ("keytrack", "retrigger"):
+            return _clamp01(v)
+        if sub == "param6":
+            otype = osc_types.get((sc, oi), 0)
+            if otype in UNISON_OSC_TYPES and raw_type == "0":
+                return _clamp01((v - 1.0) / 15.0)
+            if -1.0 <= v <= 1.0:
+                return _clamp01((v + 1.0) / 2.0 if v < 0.0 else v)
+            return None
+        if sub.startswith("param"):
+            if raw_type == "2":
+                if -1.0 <= v <= 1.0:
+                    return _clamp01((v + 1.0) / 2.0 if v < 0.0 else v)
+                if -60.0 <= v <= 70.0:
+                    return _clamp01((v + 60.0) / 130.0)
+            return None
+
+    # Scene-level parameters
+    if rest == "octave":
+        return _clamp01((v + 3.0) / 6.0)
+    if rest == "pitch":
+        return _clamp01((v + 7.0) / 14.0)
+    if rest == "portamento":
+        return _clamp01((v + 8.0) / 13.0)
+    if rest in ("pbrange_up", "pbrange_dn"):
+        return _clamp01(v / 24.0)
+    if rest == "ktrkroot":
+        return _clamp01(v / 127.0)
+    if rest == "polymode":
+        return _clamp01(v / 5.0)
+    if rest == "fm_switch":
+        return _clamp01(v / 3.0)
+    if rest == "fm_depth":
+        return _clamp01((v + 48.0) / 72.0)
+    if rest == "drift":
+        return _clamp01(v)
+    if rest in ("noisecol", "pan", "pan2", "feedback", "f_balance"):
+        return _clamp01((v + 1.0) / 2.0)
+    if rest == "volume":
+        return _clamp01(v)
+    if rest == "vca_level":
+        return _clamp01((v + 48.0) / 96.0)
+    if rest == "vca_velsense":
+        return _clamp01((v + 48.0) / 48.0)
+    if rest == "fb_config":
+        return _clamp01(v / 7.0)
+    if rest == "lowcut":
+        return _clamp01((v + 72.0) / 142.0)
+    if rest == "ws_type":
+        return _clamp01(v / 42.0)
+    if rest == "ws_drive":
+        return _clamp01((v + 24.0) / 48.0)
+    if rest in ("f2_cf_is_offset", "f2_link_resonance"):
+        return _clamp01(v)
+    if rest == "level_pfg":
+        return _clamp01((v + 48.0) / 96.0)
+    if rest.startswith("send_fx_"):
+        return _clamp01(v / 1.5874)
+    if rest.startswith("level_"):
+        return _clamp01(v)
+    if rest.startswith("mute_") or rest.startswith("solo_"):
+        return _clamp01(v)
+    if rest.startswith("route_"):
+        return _clamp01(v / 2.0)
+    return None
+
+
+def _parse_surge_fxp(fxp_path):
+    """Parse a Surge XT .fxp file and return (norm_params_dict, macro_labels_list)."""
+    norm_vals = {}
+    macro_labels = [None] * 8
+    try:
+        with open(fxp_path, "rb") as fh:
+            data = fh.read()
+        i0 = data.find(b"<patch")
+        i1 = data.find(b"</patch>")
+        if i0 < 0 or i1 < 0:
+            return norm_vals, macro_labels
+        root = ET.fromstring(data[i0:i1 + 8].decode("utf-8", errors="replace"))
+    except Exception as e:
+        logging.debug(f"Surge XT widget: failed to parse fxp '{fxp_path}' => {e}")
+        return norm_vals, macro_labels
+
+    params_el = root.find("parameters")
+    if params_el is not None:
+        # First pass: collect osc types & f2 offset flags needed to scale dependent params
+        osc_types = {}
+        f2_offset_flags = {}
+        for el in params_el:
+            t = el.tag
+            if len(t) == 11 and t[0] in ("a", "b") and t[1:5] == "_osc" and t[6:] == "_type":
+                try:
+                    osc_types[(t[0], int(t[5]))] = int(float(el.attrib.get("value", "0")))
+                except Exception:
+                    pass
+            elif t in ("a_f2_cf_is_offset", "b_f2_cf_is_offset"):
+                try:
+                    f2_offset_flags[t[0]] = int(float(el.attrib.get("value", "0")))
+                except Exception:
+                    pass
+
+        for el in params_el:
+            val_s = el.attrib.get("value")
+            if val_s is None:
+                continue
+            nv = _fxp_param_to_norm(el.tag, val_s, el.attrib.get("type", "2"), osc_types, f2_offset_flags)
+            if nv is not None:
+                norm_vals[el.tag] = nv
+
+    cc_el = root.find("customcontroller")
+    if cc_el is not None:
+        for entry in cc_el:
+            try:
+                idx = int(entry.attrib.get("i", "-1"))
+                if 0 <= idx < 8:
+                    v = float(entry.attrib.get("v", "0"))
+                    bip = entry.attrib.get("bipolar", "0") == "1"
+                    norm_vals[f"macro_{idx}"] = _clamp01((v + 1.0) / 2.0 if bip else v)
+                    lbl = (entry.attrib.get("label") or "").strip()
+                    if lbl and lbl != "-":
+                        macro_labels[idx] = lbl
+            except Exception:
+                pass
+
+    return norm_vals, macro_labels
+
+
+# ------------------------------------------------------------------------------
 # Main Widget Class
 # ------------------------------------------------------------------------------
 class zynthian_widget_surge_xt(zynthian_widget_base.zynthian_widget_base):
@@ -270,6 +594,8 @@ class zynthian_widget_surge_xt(zynthian_widget_base.zynthian_widget_base):
         self.last_snapshot = None
         self._enhanced_procs = set()
         self._bound_proc_id = None
+        self._synced_preset_sig = None
+        self._macro_labels = [None] * 8
         self.eco_on = False
         self._eco_backup = {}
 
@@ -301,12 +627,77 @@ class zynthian_widget_surge_xt(zynthian_widget_base.zynthian_widget_base):
             return
         self._build_ctrl_index(processor)
         pid = id(processor)
-        if pid not in self._enhanced_procs:
+        is_new_proc = pid not in self._enhanced_procs
+        if is_new_proc:
             self._enhanced_procs.add(pid)
             self._enhance_all_zctrls(processor)
+        self._maybe_sync_preset(only_zero=is_new_proc)
         if self._bound_proc_id != (pid, self.scene):
             self._bound_proc_id = (pid, self.scene)
             self._rebuild_all_pages(select_tab=self.active_tab, rebuild_list=True)
+
+    def _preset_sig(self, processor):
+        if not processor:
+            return None
+        pinfo = getattr(processor, "preset_info", None)
+        uri = pinfo[0] if (isinstance(pinfo, (list, tuple)) and len(pinfo) > 0) else None
+        return (
+            id(processor),
+            getattr(processor, "bank_name", None),
+            getattr(processor, "preset_name", None),
+            uri,
+        )
+
+    def _maybe_sync_preset(self, only_zero=False):
+        """Sync Zynthian zctrl values (send=False) from the active Surge XT .fxp preset."""
+        proc = self.processor
+        if not proc:
+            return
+        sig = self._preset_sig(proc)
+        if sig == self._synced_preset_sig:
+            return
+        prev_sig = self._synced_preset_sig
+        self._synced_preset_sig = sig
+
+        _, bank_name, preset_name, uri = sig
+        # Don't clobber user-saved LV2 .ttl presets that aren't in factory .fxp banks
+        if isinstance(uri, str) and uri.startswith("file://"):
+            return
+
+        fxp_path = _find_surge_fxp(bank_name, preset_name)
+        if not fxp_path:
+            return
+
+        norm_vals, macro_labels = _parse_surge_fxp(fxp_path)
+        if not norm_vals:
+            return
+
+        self._macro_labels = macro_labels
+        cdict = proc.controllers_dict
+        # On initial attach (prev_sig is None), preserve any non-zero user tweaks from snapshots
+        preserve_nonzero = bool(only_zero and prev_sig is None)
+        applied = 0
+        for key, nv in norm_vals.items():
+            z = cdict.get("surge_xt_" + key) or cdict.get(key)
+            if z is None:
+                continue
+            try:
+                cur = float(z.value)
+            except Exception:
+                cur = 0.0
+            z.value_default = nv
+            if preserve_nonzero and abs(cur) > 1e-6:
+                continue
+            try:
+                z.set_value(nv, send=False)
+                applied += 1
+            except Exception:
+                z.value = nv
+
+        if applied > 0 and prev_sig is not None:
+            # Refresh physical encoder widgets with newly synced preset values
+            self._live_swap_encoders(self.active_tab)
+        self.last_snapshot = None
 
     def _norm_key(self, s):
         return re.sub(r"[^a-z0-9]+", "_", str(s).lower()).strip("_")
@@ -459,12 +850,12 @@ class zynthian_widget_surge_xt(zynthian_widget_base.zynthian_widget_base):
             # Envelopes 1 (Amp) & 2 (Filter)
             for ei in (1, 2):
                 enh(f"{sc}_env{ei}_attack", SCALE_ENVTIME)
-                enh(f"{sc}_env{ei}_attack_shape", SCALE_BIPOLAR)
+                enh(f"{sc}_env{ei}_attack_shape", _enum_scale(ENV_SHAPES))
                 enh(f"{sc}_env{ei}_decay", SCALE_ENVTIME)
-                enh(f"{sc}_env{ei}_decay_shape", SCALE_BIPOLAR)
+                enh(f"{sc}_env{ei}_decay_shape", _enum_scale(ENV_SHAPES))
                 enh(f"{sc}_env{ei}_sustain", SCALE_PERCENT)
                 enh(f"{sc}_env{ei}_release", SCALE_ENVTIME)
-                enh(f"{sc}_env{ei}_release_shape", SCALE_BIPOLAR)
+                enh(f"{sc}_env{ei}_release_shape", _enum_scale(ENV_SHAPES))
                 enh(f"{sc}_env{ei}_mode", _enum_scale(ENV_MODES))
 
             # All 12 LFOs
@@ -497,12 +888,18 @@ class zynthian_widget_surge_xt(zynthian_widget_base.zynthian_widget_base):
         t_idx = self._osc_type_idx(osc_num)
         return OSC_PARAM_NAMES.get(t_idx, OSC_PARAM_NAMES[0])
 
+    def _macro_name(self, idx, short=False):
+        lbl = self._macro_labels[idx] if 0 <= idx < len(self._macro_labels) else None
+        if lbl:
+            return lbl[:7] if short else lbl[:12]
+        return f"M{idx + 1}" if short else f"Macro {idx + 1}"
+
     def _tab_items(self, tab_name):
         if tab_name == "Macro":
             if self.macro_bank == 0:
-                return [("macro_0", "Macro 1"), ("macro_1", "Macro 2"), ("macro_2", "Macro 3"), ("macro_3", "Macro 4")]
+                return [(f"macro_{i}", self._macro_name(i)) for i in range(4)]
             if self.macro_bank == 1:
-                return [("macro_4", "Macro 5"), ("macro_5", "Macro 6"), ("macro_6", "Macro 7"), ("macro_7", "Macro 8")]
+                return [(f"macro_{i}", self._macro_name(i)) for i in range(4, 8)]
             if self.macro_bank == 2:
                 return [("{s}_pitch", "Pitch"), ("{s}_portamento", "Glide"), ("{s}_pbrange_up", "PB Up"), ("{s}_pbrange_dn", "PB Down")]
             return [("{s}_drift", "Drift"), ("{s}_vca_level", "VCA Gain"), ("{s}_vca_velsense", "Vel > VCA"), ("{s}_ktrkroot", "Key Root")]
@@ -915,6 +1312,7 @@ class zynthian_widget_surge_xt(zynthian_widget_base.zynthian_widget_base):
     def refresh_gui(self):
         if not self.processor or self.width < 40 or self.height < 40:
             return
+        self._maybe_sync_preset(only_zero=False)
         self._follow_page()
         if self.active_tab == "Osc":
             t_idx = self._osc_type_idx()
@@ -1149,7 +1547,7 @@ class zynthian_widget_surge_xt(zynthian_widget_base.zynthian_widget_base):
                 fx0 = bx0 + ipad + i * (fw + gap)
                 self._draw_vfader(
                     fx0, my0 + ipad, fx0 + fw, my1 - ipad,
-                    f"macro_{m_idx}", f"M{m_idx + 1}",
+                    f"macro_{m_idx}", self._macro_name(m_idx, short=True),
                     accent if act else "#376996",
                     bank_kind="macro_bank", bank_idx=b_idx,
                 )
@@ -1340,7 +1738,7 @@ class zynthian_widget_surge_xt(zynthian_widget_base.zynthian_widget_base):
         bh = 34
         self._draw_bank_bar(
             x0, y0, x1, y0 + bh,
-            ["Filter 1 (Cut/Res/Mod/Key)", "Filter 2 (Cut/Res/Mod/Key)", "Config & Drive", "Offset & Link"],
+            ["Filter 1", "Filter 2", "Config & Drive", "Offset & Link"],
             self.filter_bank, accent, "filter_bank",
         )
 
@@ -1374,7 +1772,7 @@ class zynthian_widget_surge_xt(zynthian_widget_base.zynthian_widget_base):
         gh = max(10, g_bot - g_top)
 
         for hz, lbl in ((100.0, "100"), (1000.0, "1k"), (10000.0, "10k")):
-            n_hz = (12.0 * math.log2(hz / 440.0) + 56.0) / 126.0
+            n_hz = (12.0 * math.log2(hz / 440.0) + 60.0) / 130.0
             lx = gx0 + max(0.0, min(1.0, n_hz)) * gw
             c.create_line(lx, gy0 + 2, lx, gy1 - 2, fill=COL_GRID, dash=(2, 4))
             c.create_text(lx + 3, gy1 - 8, text=lbl, anchor="sw", fill=COL_DIM, font=self._font(7))
@@ -1492,7 +1890,7 @@ class zynthian_widget_surge_xt(zynthian_widget_base.zynthian_widget_base):
         bh = 34
         self._draw_bank_bar(
             x0, y0, x1, y0 + bh,
-            ["Amp EG (ADSR)", "Amp Curves", "Filter EG (ADSR)", "Filter Curves", "Env & Vel Mod"],
+            ["Amp ADSR", "Amp Curves", "Filter ADSR", "Filter Curves", "Env & Vel"],
             self.env_bank, accent, "env_bank",
         )
 
@@ -1565,7 +1963,8 @@ class zynthian_widget_surge_xt(zynthian_widget_base.zynthian_widget_base):
         r_txt = fmt_time_s(norm_to_env_s(r))
         mode_z = self._get_zctrl(f"{{s}}_{prefix}_mode")
         mode_txt = self._fmt(mode_z)
-        hdr = f"{'FILTER EG' if is_feg else 'AMP EG'} [{mode_txt}]   A: {a_txt} (curv: {int(ash*100):+d}%)   D: {d_txt}   S: {s_txt}   R: {r_txt}"
+        ash_txt = self._fmt(self._get_zctrl(f"{{s}}_{prefix}_attack_shape"))
+        hdr = f"{'FILTER EG' if is_feg else 'AMP EG'} [{mode_txt}]  A:{a_txt} ({ash_txt})  D:{d_txt}  S:{s_txt}  R:{r_txt}"
         c.create_text(x0 + 8, gy0 + 10, text=hdr, anchor="w", fill=env_col,
                       font=self._font(self._fs(0.80), bold=True))
 
@@ -1586,7 +1985,7 @@ class zynthian_widget_surge_xt(zynthian_widget_base.zynthian_widget_base):
             row = i // 2
             px0 = x0 + col * (cw + gap)
             py_i = py0 + row * (ch + gap)
-            bip = any(k in key for k in ("shape", "envmod", "velsense"))
+            bip = ("envmod" in key)
             self._draw_param_box(px0, py_i, px0 + cw, py_i + ch, key, lbl, env_col,
                                  bipolar=bip)
 
@@ -1625,7 +2024,7 @@ class zynthian_widget_surge_xt(zynthian_widget_base.zynthian_widget_base):
         r2_h = 34
         self._draw_bank_bar(
             x0, r2_y, x1, r2_y + r2_h,
-            ["Wave (Shape/Rate/Depth)", "Trig & Phase (Trig/Phase/Polar)", "EG Env (Atk/Hold/Dec/Rel)", "Mod Depths (F1/F2 Env & Key)"],
+            ["Wave & Rate", "Trig & Phase", "LFO Envelope", "Mod Depths"],
             self.lfo_bank, accent, "lfo_bank",
         )
 
@@ -1767,7 +2166,7 @@ class zynthian_widget_surge_xt(zynthian_widget_base.zynthian_widget_base):
         bh = 34
         self._draw_bank_bar(
             x0, y0, x1, y0 + bh,
-            ["Osc Mix (1-3 & Noise)", "Ring Mod & FM", "FX Sends (1-4)", "Master & Returns"],
+            ["Osc Mix", "Ring & FM", "FX Sends", "Master & Ret"],
             self.mix_bank, accent, "mix_bank",
         )
 
