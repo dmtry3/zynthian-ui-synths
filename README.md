@@ -8,13 +8,13 @@ Custom touch-first workstation widgets for **Zynthian** (V5 800×480 & touchscre
 
 ## Screenshots
 
-| Surge XT (Dual Filter Bode + 2D Nodes) | Dexed (32-Algo DX7 Diagram + 6-OP Mixer) |
+| Surge XT | Dexed |
 | :---: | :---: |
 | ![Surge XT](screenshots/surge_xt.png) | ![Dexed](screenshots/dexed.png) |
-| **RipplerX (Signal Flow + Resonator Faders)** | **Calf Multi Chorus (5-Voice Phase LFO Scope)** |
+| **RipplerX** | **Calf Multi Chorus** |
 | ![RipplerX](screenshots/ripplerx.png) | ![Calf Multi Chorus](screenshots/calf_multi_chorus.png) |
-| **Dragonfly Hall Reverb (Early Taps + Stereo Field)** | **Engine Menu Highlight Patch (`patches/`)** |
-| ![Dragonfly Hall Reverb](screenshots/dragonfly_hall_reverb.png) | ![Menu Highlight Patch](screenshots/menu_highlight_patch.png) |
+| **Dragonfly Hall Reverb** | **Menu Highlight** |
+| ![Dragonfly Hall Reverb](screenshots/dragonfly_hall_reverb.png) | ![Menu Highlight](screenshots/menu_highlight_patch.png) |
 
 ---
 

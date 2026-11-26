@@ -8,13 +8,13 @@
 
 ## Скриншоты
 
-| Surge XT (АЧХ фильтров F1/F2 + 2D-узлы) | Dexed (Диаграмма 32 алгоритмов DX7 + микшер 6 OP) |
+| Surge XT | Dexed |
 | :---: | :---: |
 | ![Surge XT](screenshots/surge_xt.png) | ![Dexed](screenshots/dexed.png) |
-| **RipplerX (Схема роутинга + фейдеры резонаторов)** | **Calf Multi Chorus (Осциллограф 5-голосного LFO)** |
+| **RipplerX** | **Calf Multi Chorus** |
 | ![RipplerX](screenshots/ripplerx.png) | ![Calf Multi Chorus](screenshots/calf_multi_chorus.png) |
-| **Dragonfly Hall Reverb (Ранние отражения + стерео)** | **Патч подсветки в меню движков (`patches/`)** |
-| ![Dragonfly Hall Reverb](screenshots/dragonfly_hall_reverb.png) | ![Патч подсветки в меню](screenshots/menu_highlight_patch.png) |
+| **Dragonfly Hall Reverb** | **Подсветка в меню** |
+| ![Dragonfly Hall Reverb](screenshots/dragonfly_hall_reverb.png) | ![Подсветка в меню](screenshots/menu_highlight_patch.png) |
 
 ---
 
